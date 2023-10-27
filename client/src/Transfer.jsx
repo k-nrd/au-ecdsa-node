@@ -1,28 +1,67 @@
 import { useState } from "react";
+import { toHex } from "ethereum-cryptography/utils";
+import { secp256k1 } from "ethereum-cryptography/secp256k1";
 import server from "./server";
+import { useEffect } from "react";
 
-function Transfer({ address, setBalance }) {
+function Transfer({ address, privateKey, setBalance }) {
   const [sendAmount, setSendAmount] = useState("");
   const [recipient, setRecipient] = useState("");
+  const [derivedMessageHash, setDerivedMessageHash] = useState("");
+  const [derivedSignature, setDerivedSignature] = useState("");
 
   const setValue = (setter) => (evt) => setter(evt.target.value);
 
-  async function transfer(evt) {
+  useEffect(() => {
+    try {
+      const amount = parseInt(sendAmount);
+      const msg = JSON.stringify({ amount });
+      const encoder = new TextEncoder();
+      const bytes = encoder.encode(msg);
+      setDerivedMessageHash(toHex(bytes));
+    } catch (_) {
+      setDerivedMessageHash("");
+    }
+  }, [sendAmount]);
+
+  useEffect(() => {
+    try {
+      setDerivedSignature(
+        secp256k1.sign(derivedMessageHash, privateKey).toCompactHex(),
+      );
+    } catch (err) {
+      setDerivedSignature("");
+    }
+  }, [derivedMessageHash, privateKey]);
+
+  const transfer = (evt) => {
     evt.preventDefault();
 
     try {
-      const {
-        data: { balance },
-      } = await server.post(`send`, {
-        sender: address,
-        amount: parseInt(sendAmount),
-        recipient,
-      });
-      setBalance(balance);
+      const amount = parseInt(sendAmount);
+
+      server
+        .get("/token")
+        .then(({ data: { token } }) =>
+          server.post("send", {
+            sender: address,
+            signature: derivedSignature,
+            recipient,
+            amount,
+            messageHash: derivedMessageHash,
+            token,
+          }),
+        )
+        .then(({ data: { balance } }) => {
+          setBalance(balance);
+        })
+        .catch((err) => {
+          console.error(err);
+        });
     } catch (ex) {
-      alert(ex.response.data.message);
+      alert(ex);
     }
-  }
+  };
 
   return (
     <form className="container transfer" onSubmit={transfer}>
@@ -37,6 +76,9 @@ function Transfer({ address, setBalance }) {
         ></input>
       </label>
 
+      <pre>Message Hash: {derivedMessageHash}</pre>
+      <pre>Signature: {derivedSignature}</pre>
+
       <label>
         Recipient
         <input
@@ -46,7 +88,9 @@ function Transfer({ address, setBalance }) {
         ></input>
       </label>
 
-      <input type="submit" className="button" value="Transfer" />
+      <button type="submit" className="button">
+        Sign and Transfer
+      </button>
     </form>
   );
 }
